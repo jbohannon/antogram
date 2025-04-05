@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Antogram</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+    <!-- Total visitors: {{ total_visitors }} -->
+</head>
+<body>
+    <div class="container">
+        <div class="banner">
+            <div class="banner-left">
+            <div id="creationControls" class="controls">
+                <div class="input-group">
+                    <input type="text" id="textInput" placeholder="text message">
+                </div>
+                <div class="input-group">
+                    <input type="text" id="imageUrl" placeholder="or image URL">
+                </div>
+                <button id="generateBtn">Generate antogram</button>
+            </div>
+            <div id="viewControls" class="controls" style="display: none;">
+                <button id="createNewBtn">Create your own antogram</button>
+            </div>
+        </div>
+        <div class="banner-right">
+            <div id="creationAttribution" class="attribution">
+                <span>Antograms created by <a href="https://johnbohannon.org" target="_blank">John Bohannon</a></span>
+            </div>
+            <div id="viewShareSection" class="share-section" style="display: none;">
+                <span class="share-text">Share this antogram:</span>
+                <div class="share-buttons">
+                    <button id="emailBtn" title="Share via email">
+                        <i class="fas fa-envelope"></i>
+                    </button>
+                    <button id="twitterBtn" title="Share on Twitter">
+                        <i class="fab fa-twitter"></i>
+                    </button>
+                    <button id="instagramBtn" title="Share on Instagram">
+                        <i class="fab fa-instagram"></i>
+                    </button>
+                    <button id="facebookBtn" title="Share on Facebook">
+                        <i class="fab fa-facebook"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <main id="sketch-holder"></main>
+    <script>
+        // Pass initial parameters to JavaScript
+        const encodedId = "{{ encoded_id or '' }}";
+        const contentType = "{{ content_type or '' }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/antogram.js') }}"></script>
+</body>
+</html> 

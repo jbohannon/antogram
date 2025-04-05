@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Create Antogram</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Create an Antogram</h1>
+        <div class="controls">
+            <input type="text" id="textInput" placeholder="Enter text to display">
+            <input type="url" id="imageUrl" placeholder="Or enter image URL">
+            <button id="createBtn">Create</button>
+        </div>
+        <div id="shareLink" style="display: none;">
+            <p>Share this link with a friend:</p>
+            <input type="text" id="shareUrl" readonly>
+            <button id="copyBtn">Copy</button>
+        </div>
+    </div>
+    <script>
+        document.getElementById('createBtn').addEventListener('click', () => {
+            const textInput = document.getElementById('textInput').value;
+            const imageUrl = document.getElementById('imageUrl').value;
+            
+            if (textInput) {
+                fetch('/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        type: 'text',
+                        content: textInput
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.encoded_id) {
+                        const shareUrl = `${window.location.origin}/view/${data.encoded_id}`;
+                        document.getElementById('shareUrl').value = shareUrl;
+                        document.getElementById('shareLink').style.display = 'block';
+                    }
+                });
+            } else if (imageUrl) {
+                fetch('/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        type: 'image',
+                        content: imageUrl
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.encoded_id) {
+                        const shareUrl = `${window.location.origin}/view/${data.encoded_id}`;
+                        document.getElementById('shareUrl').value = shareUrl;
+                        document.getElementById('shareLink').style.display = 'block';
+                    }
+                });
+            }
+        });
+
+        document.getElementById('copyBtn').addEventListener('click', () => {
+            const shareUrl = document.getElementById('shareUrl');
+            shareUrl.select();
+            document.execCommand('copy');
+            alert('Link copied to clipboard!');
+        });
+    </script>
+</body>
+</html> 
