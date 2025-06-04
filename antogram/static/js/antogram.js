@@ -14,6 +14,7 @@ let img;       // for image mode
 let offscreen; // offscreen graphics for drawing text/image
 
 // Add these constants at the top with other constants
+const MAX_NEAREST_CHECKS = 120;   // tune for quality vs. speed especially on Android
 const ANT_FRAME_WIDTH = 96;
 const ANT_FRAME_HEIGHT = 101;
 const ANT_NUM_FRAMES = 4;
@@ -241,16 +242,23 @@ class Ant {
         if (this.carrying == null) {
             // Find the nearest uncarried bit using center position
             let nearest = null;
-            let minD = Infinity;
-            for (let b of bits) {
-                if (!b.carried && !b.delivered) {
-                    let d = p5.Vector.dist(this.pos, b.pos);
-                    if (d < minD) {
-                        minD = d;
-                        nearest = b;
-                    }
-                }
-            }
+            let minD2   = Infinity;
+            let checked = 0;
+            
+            for (let i = 0; i < bits.length && checked < MAX_NEAREST_CHECKS; i++) {
+              const b = bits[i];
+              if (b.carried || b.delivered) continue;
+            
+              const dx = b.pos.x - this.pos.x;
+              const dy = b.pos.y - this.pos.y;
+              const d2 = dx*dx + dy*dy;      // avoiding sqrt calc
+            
+              if (d2 < minD2) {
+                minD2   = d2;
+                nearest = b;
+              }
+              checked++;
+            }            
             
             if (nearest) {
                 // Calculate desired direction
