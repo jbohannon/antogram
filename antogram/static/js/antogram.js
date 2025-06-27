@@ -3,6 +3,10 @@ let mode = "text";
 let message = "";
 let imageData = "";
 
+// Reverse mode configuration
+let isReverseMode = false;
+let isLandingPage = false;
+
 // Add p5.js text style constant
 const BOLD = 'bold';
 
@@ -55,23 +59,60 @@ function switchToCreationMode() {
 
 // Function to handle form submission
 function handleSubmit() {
-    const textInput = document.getElementById('textInput').value;
-    const imageUrl = document.getElementById('imageUrl').value;
+    const input = document.getElementById('textInput').value.trim();
     
-    // Check lengths before proceeding
-    if (textInput && textInput.length > 200) {
-        alert('Text message exceeds 200 characters');
-        return;
-    }
-    if (imageUrl && imageUrl.length > 2000) {
-        alert('Image URL exceeds 2000 characters');
+    if (!input) {
+        alert('Please enter a message or image URL');
         return;
     }
     
-    // Only proceed if one field has content and is within limits
-    if (textInput) {
+    // Determine if input is a URL (starts with https://) or text
+    const isImageUrl = input.startsWith('https://');
+    
+    if (isImageUrl) {
+        // Handle as image URL
+        if (input.length > 2000) {
+            alert('Image URL exceeds 2000 characters');
+            return;
+        }
+        
+        mode = 'image';
+        imageData = input;
+        
+        // Clear existing arrays
+        bits = [];
+        ants = [];
+        targetPositions = [];
+        
+        // Prepare image before sending to server
+        prepareImage();
+        
+        fetch('/generate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                type: 'image',
+                content: input
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.encoded_id) {
+                showViewControls();
+                updateURL(data.encoded_id);
+            }
+        });
+    } else {
+        // Handle as text message
+        if (input.length > 200) {
+            alert('Text message exceeds 200 characters');
+            return;
+        }
+        
         mode = 'text';
-        message = textInput;
+        message = input;
         
         // Clear existing arrays
         bits = [];
@@ -98,37 +139,6 @@ function handleSubmit() {
                 updateURL(data.encoded_id);
             }
         });
-    } else if (imageUrl) {
-        mode = 'image';
-        imageData = imageUrl;
-        
-        // Clear existing arrays
-        bits = [];
-        ants = [];
-        targetPositions = [];
-        
-        // Prepare image before sending to server
-        prepareImage();
-        
-        fetch('/generate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                type: 'image',
-                content: imageUrl
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.encoded_id) {
-                showViewControls();
-                updateURL(data.encoded_id);
-            }
-        });
-    } else {
-        alert('Please enter either text or an image URL');
     }
 }
 
@@ -139,12 +149,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Form inputs
     document.getElementById('textInput').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            handleSubmit();
-        }
-    });
-    
-    document.getElementById('imageUrl').addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             handleSubmit();
         }
@@ -179,10 +183,63 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
+// Function to generate random scattered target positions for reverse mode
+function generateRandomTargets(numTargets) {
+    targetPositions = []; // Clear existing targets
+    
+    // Generate well-distributed random positions
+    for (let i = 0; i < numTargets; i++) {
+        let attempts = 0;
+        let newPos;
+        
+        do {
+            newPos = createVector(
+                random(50, width - 50),   // Avoid edges
+                random(50, height - 50)
+            );
+            attempts++;
+        } while (attempts < 10 && isTooCloseToExisting(newPos, 30));
+        
+        targetPositions.push(newPos);
+    }
+}
+
+// Helper function to check if a position is too close to existing targets
+function isTooCloseToExisting(pos, minDistance) {
+    for (let target of targetPositions) {
+        if (p5.Vector.dist(pos, target) < minDistance) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Function to prepare landing page with "Write with ants" message
+function prepareLandingPage() {
+    message = "Write with ants";
+    mode = "text";
+    isReverseMode = true;
+    isLandingPage = true;
+    
+    // Prepare the text and positions
+    prepareText();
+}
+
 // Bit class: holds the current scattered position and target position
 class Bit {
   constructor(x, y, col, targetX = null, targetY = null) {
-    this.pos = createVector(random(width), random(height));
+    // Position logic based on mode
+    if (isReverseMode) {
+      // In reverse mode: bits start at letter positions with small random perturbations
+      this.pos = createVector(
+        x + random(-2, 2),  // Add same randomness as final delivery positions
+        y + random(-2, 2)
+      );
+    } else {
+      // In normal mode: bits start at random positions
+      this.pos = createVector(random(width), random(height));
+    }
+    
     this.col = col;
     this.carried = false;
     this.delivered = false;
@@ -305,7 +362,7 @@ class Ant {
                     if (mode === "image" && nearest.targetX !== null && nearest.targetY !== null) {
                         this.targetPos = createVector(nearest.targetX, nearest.targetY);
                     } else {
-                        // For text, find nearest available target position with top-left bias
+                        // For text, find target position (with or without bias based on mode)
                         if (targetPositions.length > 0) {
                             let bestTarget = null;
                             let bestScore = Infinity;
@@ -313,9 +370,13 @@ class Ant {
                             for (let i = 0; i < targetPositions.length; i++) {
                                 let target = targetPositions[i];
                                 let d = p5.Vector.dist(this.pos, target);
-                                // Add top-left bias
-                                let topLeftBias = (target.x / width + target.y / height) * width * 0.5;
-                                let score = d + topLeftBias;
+                                let score = d;
+                                
+                                // Add top-left bias only in normal mode (not in reverse mode)
+                                if (!isReverseMode) {
+                                    let topLeftBias = (target.x / width + target.y / height) * width * 0.5;
+                                    score += topLeftBias;
+                                }
                                 
                                 if (score < bestScore) {
                                     bestScore = score;
@@ -527,6 +588,27 @@ function setup() {
     const urlParams = new URLSearchParams(window.location.search);
     const encodedId = urlParams.get('id');
     
+    // Landing page detection: no encoded ID and no form inputs
+    if (!encodedId) {
+        const textInput = document.getElementById('textInput');
+        const imageUrl = document.getElementById('imageUrl');
+        
+        // Check if this is a fresh landing page (no user input)
+        if ((!textInput || !textInput.value) && (!imageUrl || !imageUrl.value)) {
+            isLandingPage = true;
+            // Initialize landing page with reverse mode
+            prepareLandingPage();
+            
+            // Hide creation controls initially for landing page
+            document.getElementById('creationControls').style.display = 'none';
+            
+            // Show controls after a delay to let the animation play
+            setTimeout(() => {
+                document.getElementById('creationControls').style.display = 'flex';
+            }, 3000); // Show controls after 3 seconds
+        }
+    }
+    
     if (encodedId) {
         // We're viewing an existing antogram
         document.getElementById('creationControls').style.display = 'none';
@@ -651,9 +733,6 @@ function prepareText() {
             let a = offscreen.pixels[index+3];
             
             if (a > 128 && r < 200) {
-                // Store target position
-                targetPositions.push(createVector(x, y));
-                
                 // Generate a random soil-like color using RGB
                 // Base brown color with random variations
                 let baseR = 85;  // Base reddish-brown
@@ -671,10 +750,23 @@ function prepareText() {
                     constrain(baseB + bVariation, 0, 255)
                 );
                 
-                // Create a bit with the random soil color
-                bits.push(new Bit(x, y, soilColor));
+                if (isReverseMode) {
+                    // In reverse mode: bits start at letter positions (x, y)
+                    // and targets are random positions
+                    bits.push(new Bit(x, y, soilColor));
+                } else {
+                    // In normal mode: store letter positions as targets
+                    // and bits start at random positions
+                    targetPositions.push(createVector(x, y));
+                    bits.push(new Bit(x, y, soilColor));
+                }
             }
         }
+    }
+    
+    // Generate random targets for reverse mode
+    if (isReverseMode) {
+        generateRandomTargets(bits.length);
     }
 }
 
