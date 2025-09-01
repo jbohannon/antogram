@@ -18,7 +18,7 @@ let img;       // for image mode
 let offscreen; // offscreen graphics for drawing text/image
 
 // Add these constants at the top with other constants
-const MAX_NEAREST_CHECKS = 120;   // tune for quality vs. speed especially on Android
+const MAX_NEAREST_CHECKS = 30;   // tune for quality vs. speed especially on Android
 const ANT_FRAME_WIDTH = 96;
 const ANT_FRAME_HEIGHT = 101;
 const ANT_NUM_FRAMES = 4;
@@ -573,7 +573,11 @@ function setup() {
     const sketchHolder = document.getElementById('sketch-holder');
     const canvas = createCanvas(sketchHolder.clientWidth, sketchHolder.clientHeight);
     canvas.parent('sketch-holder');
-    frameRate(30);
+    
+    // Mobile detection and frame rate optimization
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
+    frameRate(isMobile ? 20 : 30);
+    
     offscreen = createGraphics(width, height);
     
     // Load the ant sprite
