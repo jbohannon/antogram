@@ -517,11 +517,19 @@ class Ant {
 
     // Calculate separation force from nearby ants
     calculateSeparation() {
+        // Skip separation calculations when carrying a bit (focused on delivery)
+        if (this.carrying !== null) {
+            return createVector(0, 0);
+        }
+        
         let separation = createVector(0, 0);
         let count = 0;
+        let checked = 0;
+        const maxChecks = 50; // Limit separation checks to maximum 50 other ants per frame
         
         for (let other of ants) {
             if (other === this) continue; // Skip self
+            if (checked >= maxChecks) break; // Early exit after checking 50 ants
             
             let d = p5.Vector.dist(this.pos, other.pos);
             if (d < this.separationRadius) {
@@ -532,13 +540,17 @@ class Ant {
                 separation.add(diff);
                 count++;
             }
+            checked++;
         }
         
-        if (count > 0) {
-            separation.div(count);
-            separation.setMag(this.maxSpeed);
-            separation.mult(this.separationStrength);
+        // Early exit if no nearby ants found
+        if (count === 0) {
+            return createVector(0, 0);
         }
+        
+        separation.div(count);
+        separation.setMag(this.maxSpeed);
+        separation.mult(this.separationStrength);
         
         return separation;
     }

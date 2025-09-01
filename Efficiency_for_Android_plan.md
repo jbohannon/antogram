@@ -62,6 +62,8 @@ Implemented mobile detection and conditional frame rate settings in antogram.js:
 
 ### Developer Notes - Phase 1 End
 
+Phase 1 testing results: Small improvement in animation speed on Android but still very slow. The frame rate reduction helped but more aggressive optimizations are needed. Proceeding to Phase 2.
+
 ---
 
 ## Phase 2: Optimize Ant Separation Calculations
@@ -70,11 +72,16 @@ Implemented mobile detection and conditional frame rate settings in antogram.js:
 
 ### Developer Notes - Phase 2 Start
 
+Optimized ant separation calculations in calculateSeparation() method (antogram.js:519-556):
+- Skip separation when carrying bits (line 521-523)
+- Limit checks to max 50 ants per frame (line 528,532)
+- Early exit when no nearby ants found (line 547-549)
+
 ### Tasks
 
-- [ ] Skip separation calculations when ant is carrying a bit (focused on delivery)
-- [ ] Limit separation checks to maximum 50 other ants per frame
-- [ ] Add early exit if no nearby ants found
+- [x] Skip separation calculations when ant is carrying a bit (focused on delivery)
+- [x] Limit separation checks to maximum 50 other ants per frame
+- [x] Add early exit if no nearby ants found
 
 ### Sanity Checks - Phase 2
 
