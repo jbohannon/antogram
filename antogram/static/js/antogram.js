@@ -664,8 +664,9 @@ function setup() {
         document.getElementById('viewShareSection').style.display = 'none';
     }
     
-    // Create ants
-    let numAnts = 200;
+    // Create ants with mobile optimization
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
+    let numAnts = isMobileDevice ? 100 : 200;  // Use 100 ants for mobile, 200 for desktop
     for (let i = 0; i < numAnts; i++) {
         ants.push(new Ant());
     }

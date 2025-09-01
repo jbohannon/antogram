@@ -91,6 +91,8 @@ Optimized ant separation calculations in calculateSeparation() method (antogram.
 
 ### Developer Notes - Phase 2 End
 
+Phase 2 testing results: Animation is still so slow it's broken on Android. The separation optimizations helped but not enough. Need more aggressive optimization. Proceeding to Phase 3 to reduce ant count by 50%.
+
 ---
 
 ## Phase 3: Reduce Ant Count on Mobile
@@ -99,11 +101,16 @@ Optimized ant separation calculations in calculateSeparation() method (antogram.
 
 ### Developer Notes - Phase 3 Start
 
+Implemented mobile-specific ant count reduction in setup() function (antogram.js:668-669):
+- Mobile devices now use only 100 ants (50% reduction from 200)
+- Desktop maintains 200 ants for full visual quality
+- This should dramatically reduce computational load on mobile devices
+
 ### Tasks
 
-- [ ] Add mobile detection in ant creation section
-- [ ] Set `numAnts = 100` for mobile, `200` for desktop
-- [ ] Ensure adequate ant density for text formation
+- [x] Add mobile detection in ant creation section
+- [x] Set `numAnts = 100` for mobile, `200` for desktop
+- [x] Ensure adequate ant density for text formation
 
 ### Sanity Checks - Phase 3
 
