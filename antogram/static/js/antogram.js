@@ -17,7 +17,6 @@ const BOLD = 'bold';
 // Global arrays for bits (the pixels) and ants
 let bits = [];
 let ants = [];
-let targetPositions = [];
 let img;       // for image mode
 let offscreen; // offscreen graphics for drawing text/image
 
@@ -28,6 +27,91 @@ const ANT_FRAME_HEIGHT = 101;
 const ANT_NUM_FRAMES = 4;
 const ANT_SCALE = 0.25;
 const ANT_PIXELS_PER_STEP = 8;
+
+// Global Job Queue System for efficient ant coordination
+class JobManager {
+    static jobs = [];
+    static availableJobs = [];
+    static completedJobs = 0;
+    
+    static createJob(sourcePos, destPos) {
+        const job = {
+            id: this.jobs.length,
+            sourcePos: {x: sourcePos.x, y: sourcePos.y},
+            destPos: {x: destPos.x, y: destPos.y},
+            reserved: false,
+            completed: false,
+            bit: null  // Will hold the actual bit when picked up
+        };
+        this.jobs.push(job);
+        this.availableJobs.push(job);
+        return job;
+    }
+    
+    static claimNearestJob(antPos) {
+        if (this.availableJobs.length === 0) return null;
+        
+        let bestJob = null;
+        let bestScore = Infinity;
+        let bestIndex = -1;
+        
+        // Bias toward earlier jobs in the pre-sorted list + distance
+        for (let i = 0; i < this.availableJobs.length; i++) {
+            const job = this.availableJobs[i];
+            if (job.reserved) continue;
+            
+            const dx = job.sourcePos.x - antPos.x;
+            const dy = job.sourcePos.y - antPos.y;
+            const distSq = dx * dx + dy * dy;
+            
+            // Bias score: prefer jobs earlier in the sorted list
+            const positionBias = i * 1000; // Earlier jobs get lower scores
+            const score = distSq + positionBias;
+            
+            if (score < bestScore) {
+                bestScore = score;
+                bestJob = job;
+                bestIndex = i;
+            }
+        }
+        
+        if (bestJob) {
+            bestJob.reserved = true;
+            // Remove from available jobs for efficiency
+            this.availableJobs.splice(bestIndex, 1);
+        }
+        
+        return bestJob;
+    }
+    
+    static completeJob(job) {
+        job.completed = true;
+        this.completedJobs++;
+    }
+    
+    static reset() {
+        this.jobs = [];
+        this.availableJobs = [];
+        this.completedJobs = 0;
+    }
+    
+    static sortJobsForWritingBias() {
+        // Pre-sort jobs by left-to-right, top-to-bottom preference with slight randomness
+        // Only apply in normal mode (not reverse mode)
+        if (!isReverseMode) {
+            this.availableJobs.sort((a, b) => {
+                // Stronger left-to-right bias, less random noise
+                const aScore = (a.destPos.x / width) * 2 + (a.destPos.y / height) + random(-0.1, 0.1);
+                const bScore = (b.destPos.x / width) * 2 + (b.destPos.y / height) + random(-0.1, 0.1);
+                return aScore - bScore; // Top-left jobs come first
+            });
+        }
+    }
+    
+    static getProgress() {
+        return this.jobs.length > 0 ? this.completedJobs / this.jobs.length : 0;
+    }
+}
 
 // Function to update URL with encoded ID
 function updateURL(encodedId) {
@@ -187,36 +271,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// Function to generate random scattered target positions for reverse mode
-function generateRandomTargets(numTargets) {
-    targetPositions = []; // Clear existing targets
-    
-    // Generate well-distributed random positions
-    for (let i = 0; i < numTargets; i++) {
-        let attempts = 0;
-        let newPos;
-        
-        do {
-            newPos = createVector(
-                random(50, width - 50),   // Avoid edges
-                random(50, height - 50)
-            );
-            attempts++;
-        } while (attempts < 10 && isTooCloseToExisting(newPos, 30));
-        
-        targetPositions.push(newPos);
-    }
-}
-
-// Helper function to check if a position is too close to existing targets
-function isTooCloseToExisting(pos, minDistance) {
-    for (let target of targetPositions) {
-        if (p5.Vector.dist(pos, target) < minDistance) {
-            return true;
-        }
-    }
-    return false;
-}
 
 // Function to prepare landing page with "Write with ants" message
 function prepareLandingPage() {
@@ -229,323 +283,172 @@ function prepareLandingPage() {
     prepareText();
 }
 
-// Bit class: holds the current scattered position and target position
+// Simplified Bit class for job system
 class Bit {
-  constructor(x, y, col, targetX = null, targetY = null) {
-    // Position logic based on mode
-    if (isReverseMode) {
-      // In reverse mode: bits start at letter positions with small random perturbations
-      this.pos = createVector(
-        x + random(-2, 2),  // Add same randomness as final delivery positions
-        y + random(-2, 2)
-      );
-    } else {
-      // In normal mode: bits start at random positions
-      this.pos = createVector(random(width), random(height));
-    }
-    
+  constructor(x, y, col) {
+    this.pos = createVector(x, y);
     this.col = col;
     this.carried = false;
     this.delivered = false;
-    // Store original target position for images
-    this.targetX = targetX;
-    this.targetY = targetY;
-    // Add pickup animation properties
-    this.pickupProgress = 0;
-    this.pickupStartPos = null;
-    this.pickupTargetPos = null;
-  }
-
-  // Add method to start pickup animation
-  startPickup(antPos, antHeading) {
-    this.pickupStartPos = this.pos.copy();
-    // Calculate target position at ant's jaws
-    let bitOffset = p5.Vector.fromAngle(antHeading);
-    bitOffset.mult(ANT_FRAME_WIDTH * ANT_SCALE * 0.6);  // 60% of ant's width from center
-    this.pickupTargetPos = p5.Vector.add(antPos, bitOffset);
-    this.pickupProgress = 0;
-  }
-
-  // Add method to update pickup animation
-  updatePickup() {
-    if (this.pickupProgress < 1) {
-      this.pickupProgress += 0.1; // Adjust speed of pickup animation
-      // Use smooth easing function for natural movement
-      let easedProgress = this.pickupProgress * this.pickupProgress * (3 - 2 * this.pickupProgress);
-      this.pos = p5.Vector.lerp(this.pickupStartPos, this.pickupTargetPos, easedProgress);
-    }
   }
 }
 
-// Ant class: each ant will seek an available bit and carry it to a target position
+// Simplified Ant class using job queue system
 class Ant {
     constructor() {
         this.pos = createVector(random(width), random(height));
         this.velocity = p5.Vector.random2D().mult(2);
         this.maxSpeed = IS_MOBILE ? 4.5 : 3;  // 50% faster on mobile
-        this.wanderStrength = 0.5;
-        this.carrying = null;
-        this.targetPos = null;
         this.distanceTraveled = 0;
         
-        // Wandering behavior properties
-        this.wanderTarget = null;     // Current wander target
-        this.wanderDistance = 0;      // Distance traveled in current wander
-        this.bodyLength = ANT_FRAME_WIDTH * ANT_SCALE; // Ant's body length
-        this.maxWanderDistance = random(5, 10) * this.bodyLength; // 5-10 body lengths
+        // Job-based behavior
+        this.currentJob = null;
+        this.carrying = null;
+        this.targetPos = null;  // Current movement target (source or dest)
+        this.state = 'seeking_job';  // 'seeking_job', 'going_to_source', 'going_to_dest'
         
-        // Separation behavior properties
-        this.separationRadius = this.bodyLength * 2; // Distance at which ants start avoiding each other
-        this.separationStrength = 0.5; // Strength of the separation force
+        // Smooth wandering behavior
+        this.wanderTarget = null;
+        this.wanderDistance = 0;
+        this.maxWanderDistance = random(100, 200);  // Distance before choosing new direction
     }
 
     update() {
-        if (this.carrying == null) {
-            // Find the nearest uncarried bit using center position
-            let nearest = null;
-            let minD2   = Infinity;
-            let checked = 0;
-            
-            for (let i = 0; i < bits.length && checked < MAX_NEAREST_CHECKS; i++) {
-              const b = bits[i];
-              if (b.carried || b.delivered) continue;
-            
-              const dx = b.pos.x - this.pos.x;
-              const dy = b.pos.y - this.pos.y;
-              const d2 = dx*dx + dy*dy;      // avoiding sqrt calc
-            
-              if (d2 < minD2) {
-                minD2   = d2;
-                nearest = b;
-              }
-              checked++;
-            }            
-            
-            if (nearest) {
-                // Calculate desired direction
-                let desired = p5.Vector.sub(nearest.pos, this.pos);
-                let distanceToTarget = desired.mag();
-                desired.setMag(this.maxSpeed);
-                
-                // Add subtle distance-based orientation randomness
-                let maxRandomAngle = map(distanceToTarget, 0, 200, 0, PI/16);
-                let randomAngle = random(-maxRandomAngle, maxRandomAngle);
-                desired.rotate(randomAngle);
-                
-                let wander = p5.Vector.random2D();
-                wander.mult(this.wanderStrength);
-                desired.add(wander);
-                
-                // Add separation force
-                let separation = this.calculateSeparation();
-                desired.add(separation);
-                
-                // Limit the steering force more aggressively when changing direction
-                let steer = p5.Vector.sub(desired, this.velocity);
-                let currentSpeed = this.velocity.mag();
-                let steerLimit = map(currentSpeed, 0, this.maxSpeed, 0.1, 0.3);
-                steer.limit(steerLimit);
-                this.velocity.add(steer);
-                
-                // Ensure minimum velocity to prevent spinning
-                if (this.velocity.mag() < 0.5) {
-                    this.velocity.setMag(0.5);
-                }
-                
-                this.velocity.limit(this.maxSpeed);
-                this.pos.add(this.velocity);
-                
-                // Check distance from center to bit for pickup
-                if (p5.Vector.dist(this.pos, nearest.pos) < 5) {
-                    this.carrying = nearest;
-                    nearest.carried = true;
-                    // Start pickup animation
-                    nearest.startPickup(this.pos, this.velocity.heading());
-                    
-                    // For images, use the bit's stored target position
-                    if (mode === "image" && nearest.targetX !== null && nearest.targetY !== null) {
-                        this.targetPos = createVector(nearest.targetX, nearest.targetY);
-                    } else {
-                        // For text, find target position (with or without bias based on mode)
-                        if (targetPositions.length > 0) {
-                            let bestTarget = null;
-                            let bestScore = Infinity;
-                            
-                            for (let i = 0; i < targetPositions.length; i++) {
-                                let target = targetPositions[i];
-                                let d = p5.Vector.dist(this.pos, target);
-                                let score = d;
-                                
-                                // Add top-left bias only in normal mode (not in reverse mode)
-                                if (!isReverseMode) {
-                                    let topLeftBias = (target.x / width + target.y / height) * width * 0.5;
-                                    score += topLeftBias;
-                                }
-                                
-                                if (score < bestScore) {
-                                    bestScore = score;
-                                    bestTarget = i;
-                                }
-                            }
-                            
-                            // Assign the chosen target
-                            this.targetPos = targetPositions[bestTarget];
-                            // Remove the target position from available positions
-                            targetPositions.splice(bestTarget, 1);
-                        }
+        // Job-based behavior state machine
+        switch (this.state) {
+            case 'seeking_job':
+                if (!this.currentJob) {
+                    this.currentJob = JobManager.claimNearestJob(this.pos);
+                    if (this.currentJob) {
+                        this.targetPos = createVector(this.currentJob.sourcePos.x, this.currentJob.sourcePos.y);
+                        this.state = 'going_to_source';
                     }
                 }
-            } else {
-                // Wandering behavior when no bits are available
-                // If we don't have a wander target or reached it, choose a new one
-                if (!this.wanderTarget || this.wanderDistance >= this.maxWanderDistance) {
-                    // Get current heading
-                    let currentHeading = this.velocity.heading();
-                    // Generate a random angle within +/- 45 degrees of current heading (reduced from 90)
-                    let angleOffset = random(-PI/4, PI/4);
-                    let newHeading = currentHeading + angleOffset;
-                    
-                    // Create new wander target with limited angle change
-                    this.wanderTarget = p5.Vector.fromAngle(newHeading)
-                        .mult(this.maxWanderDistance)
-                        .add(this.pos);
-                    
-                    this.wanderDistance = 0;
-                    this.maxWanderDistance = random(5, 10) * this.bodyLength; // New random wander distance
-                }
+                break;
                 
-                // Move toward wander target
-                let desired = p5.Vector.sub(this.wanderTarget, this.pos);
-                desired.setMag(this.maxSpeed);
-                
-                // Add separation force
-                let separation = this.calculateSeparation();
-                desired.add(separation);
-                
-                // Limit the steering force more aggressively when changing direction
-                let steer = p5.Vector.sub(desired, this.velocity);
-                let currentSpeed = this.velocity.mag();
-                let steerLimit = map(currentSpeed, 0, this.maxSpeed, 0.1, 0.3);
-                steer.limit(steerLimit);
-                this.velocity.add(steer);
-                
-                // Ensure minimum velocity to prevent spinning
-                if (this.velocity.mag() < 0.5) {
-                    this.velocity.setMag(0.5);
-                }
-                
-                this.velocity.limit(this.maxSpeed);
-                this.pos.add(this.velocity);
-                
-                // Update distance traveled in current wander
-                this.wanderDistance += this.velocity.mag();
-                
-                // If we hit a wall, choose a new direction away from the wall
-                if (this.pos.x <= 0 || this.pos.x >= width || this.pos.y <= 0 || this.pos.y >= height) {
-                    // Determine which wall was hit and choose a new direction away from it
-                    let newHeading;
-                    if (this.pos.x <= 0) {
-                        // Hit left wall - move right with some randomness
-                        newHeading = random(-PI/4, PI/4);
-                    } else if (this.pos.x >= width) {
-                        // Hit right wall - move left with some randomness
-                        newHeading = random(PI*3/4, PI*5/4);
-                    } else if (this.pos.y <= 0) {
-                        // Hit top wall - move down with some randomness
-                        newHeading = random(PI/4, PI*3/4);
-                    } else {
-                        // Hit bottom wall - move up with some randomness
-                        newHeading = random(-PI*3/4, -PI/4);
+            case 'going_to_source':
+                if (this.targetPos && p5.Vector.dist(this.pos, this.targetPos) < 5) {
+                    // Arrived at source - pick up any available bit
+                    this.pickupNearestBit();
+                    if (this.carrying) {
+                        this.targetPos = createVector(this.currentJob.destPos.x, this.currentJob.destPos.y);
+                        this.state = 'going_to_dest';
                     }
-                    
-                    // Create new velocity with the new heading
-                    this.velocity = p5.Vector.fromAngle(newHeading).mult(this.maxSpeed);
-                    
-                    // Create new wander target in the new direction
-                    this.wanderTarget = p5.Vector.fromAngle(newHeading)
-                        .mult(this.maxWanderDistance)
-                        .add(this.pos);
-                    this.wanderDistance = 0;
                 }
-            }
-        } else {
-            // Carrying a bit: move it toward the chosen target location
-            let desired = p5.Vector.sub(this.targetPos, this.pos);
-            let distanceToTarget = desired.mag();
-            desired.setMag(this.maxSpeed);
-            
-            // Add subtle distance-based orientation randomness
-            let maxRandomAngle = map(distanceToTarget, 0, 200, 0, PI/16);
-            let randomAngle = random(-maxRandomAngle, maxRandomAngle);
-            desired.rotate(randomAngle);
-            
-            let wander = p5.Vector.random2D();
-            wander.mult(this.wanderStrength * 0.3);
-            desired.add(wander);
-            
-            let steer = p5.Vector.sub(desired, this.velocity);
-            steer.limit(0.3);
-            this.velocity.add(steer);
-            this.velocity.limit(this.maxSpeed);
-            this.pos.add(this.velocity);
-            
-            // Update bit position based on pickup animation or normal carrying
-            if (this.carrying.pickupProgress < 1) {
-                this.carrying.updatePickup();
-            } else {
-                // Normal carrying position
-                let bitOffset = p5.Vector.fromAngle(this.velocity.heading());
-                bitOffset.mult(ANT_FRAME_WIDTH * ANT_SCALE * 0.6);
-                this.carrying.pos.x = this.pos.x + bitOffset.x;
-                this.carrying.pos.y = this.pos.y + bitOffset.y;
-            }
-            
-            if (p5.Vector.dist(this.pos, this.targetPos) < 5) {
-                // Double the noise in final placement
-                this.carrying.pos.x = this.targetPos.x + random(-2, 2);
-                this.carrying.pos.y = this.targetPos.y + random(-2, 2);
-                this.carrying.delivered = true;
-                this.carrying.carried = false;
-                this.carrying = null;
-                this.targetPos = null;
-            }
+                break;
+                
+            case 'going_to_dest':
+                if (this.carrying && this.targetPos && p5.Vector.dist(this.pos, this.targetPos) < 5) {
+                    // Arrived at destination - complete job
+                    this.dropBit();
+                    JobManager.completeJob(this.currentJob);
+                    this.currentJob = null;
+                    this.state = 'seeking_job';
+                }
+                break;
         }
+        
+        // Simple movement toward target
+        if (this.targetPos) {
+            this.moveToward(this.targetPos);
+        } else {
+            this.wander();
+        }
+        
+        // Update distance for animation
+        this.distanceTraveled += this.velocity.mag();
         
         // Keep ants within canvas bounds
         this.pos.x = constrain(this.pos.x, 0, width);
         this.pos.y = constrain(this.pos.y, 0, height);
-        
-        // Update distance for animation
-        this.distanceTraveled += this.velocity.mag();
     }
-
-    // Calculate separation force from nearby ants
-    calculateSeparation() {
-        let separation = createVector(0, 0);
-        let count = 0;
+    
+    moveToward(target) {
+        let desired = p5.Vector.sub(target, this.pos);
+        desired.setMag(this.maxSpeed);
         
-        for (let other of ants) {
-            if (other === this) continue; // Skip self
+        let steer = p5.Vector.sub(desired, this.velocity);
+        steer.limit(0.3);
+        this.velocity.add(steer);
+        this.velocity.limit(this.maxSpeed);
+        this.pos.add(this.velocity);
+        
+        // Update carried bit position
+        if (this.carrying) {
+            let bitOffset = p5.Vector.fromAngle(this.velocity.heading());
+            bitOffset.mult(ANT_FRAME_WIDTH * ANT_SCALE * 0.6);
+            this.carrying.pos.x = this.pos.x + bitOffset.x;
+            this.carrying.pos.y = this.pos.y + bitOffset.y;
+        }
+    }
+    
+    wander() {
+        // Smooth wandering - pick a direction and stick with it for a while
+        if (!this.wanderTarget || this.wanderDistance >= this.maxWanderDistance) {
+            // Choose a new wander direction (limited angle change for smoothness)
+            let currentHeading = this.velocity.heading();
+            let angleOffset = random(-PI/3, PI/3);  // ±60 degrees max change
+            let newHeading = currentHeading + angleOffset;
             
-            let d = p5.Vector.dist(this.pos, other.pos);
-            if (d < this.separationRadius) {
-                // Calculate vector pointing away from the other ant
-                let diff = p5.Vector.sub(this.pos, other.pos);
-                diff.normalize();
-                diff.div(d); // Weight by distance (closer ants have stronger effect)
-                separation.add(diff);
-                count++;
+            // Create wander target in the new direction
+            this.wanderTarget = p5.Vector.fromAngle(newHeading)
+                .mult(this.maxWanderDistance)
+                .add(this.pos);
+                
+            this.wanderDistance = 0;
+            this.maxWanderDistance = random(100, 200);  // Vary distance before next direction change
+        }
+        
+        // Move toward wander target
+        let desired = p5.Vector.sub(this.wanderTarget, this.pos);
+        desired.setMag(this.maxSpeed * 0.7);  // Slower wandering
+        
+        let steer = p5.Vector.sub(desired, this.velocity);
+        steer.limit(0.1);  // Gentle steering
+        this.velocity.add(steer);
+        this.velocity.limit(this.maxSpeed * 0.7);
+        this.pos.add(this.velocity);
+        
+        // Track distance traveled
+        this.wanderDistance += this.velocity.mag();
+        
+        // Handle wall collisions - bounce off walls smoothly
+        if (this.pos.x <= 10 || this.pos.x >= width-10 || this.pos.y <= 10 || this.pos.y >= height-10) {
+            // Choose new direction away from wall
+            let centerX = width / 2;
+            let centerY = height / 2;
+            let toCenter = createVector(centerX - this.pos.x, centerY - this.pos.y);
+            toCenter.normalize();
+            toCenter.mult(this.maxWanderDistance);
+            
+            this.wanderTarget = p5.Vector.add(this.pos, toCenter);
+            this.wanderDistance = 0;
+        }
+    }
+    
+    pickupNearestBit() {
+        for (let bit of bits) {
+            if (!bit.carried && !bit.delivered && p5.Vector.dist(this.pos, bit.pos) < 10) {
+                this.carrying = bit;
+                bit.carried = true;
+                this.currentJob.bit = bit;
+                break;
             }
         }
-        
-        if (count > 0) {
-            separation.div(count);
-            separation.setMag(this.maxSpeed);
-            separation.mult(this.separationStrength);
-        }
-        
-        return separation;
     }
+    
+    dropBit() {
+        if (this.carrying) {
+            // Place bit at destination with slight randomness
+            this.carrying.pos.x = this.targetPos.x + random(-2, 2);
+            this.carrying.pos.y = this.targetPos.y + random(-2, 2);
+            this.carrying.delivered = true;
+            this.carrying.carried = false;
+            this.carrying = null;
+            this.targetPos = null;
+        }
+    }
+
 
     draw() {
         push();
@@ -602,10 +505,10 @@ function setup() {
     // Load the ant sprite
     antSprite = loadImage('/static/images/ant_sprite_sheet.png');
     
-    // Clear existing arrays
+    // Clear existing arrays and reset job system
     bits = [];
     ants = [];
-    targetPositions = [];
+    JobManager.reset();
     
     // Check for encoded ID in URL
     const urlParams = new URLSearchParams(window.location.search);
@@ -784,23 +687,32 @@ function prepareText() {
                 );
                 
                 if (isReverseMode) {
-                    // In reverse mode: bits start at letter positions (x, y)
-                    // and targets are random positions
-                    bits.push(new Bit(x, y, soilColor));
+                    // Reverse mode: bits start at text positions, jobs go to random destinations
+                    let sourcePos = createVector(x, y);  // Text position
+                    let destPos = createVector(random(width), random(height));  // Random destination
+                    
+                    // Create bit at text position with small jiggle (already formed)
+                    bits.push(new Bit(sourcePos.x + random(-2, 2), sourcePos.y + random(-2, 2), soilColor));
+                    
+                    // Create job to move it to random position (disassemble)
+                    JobManager.createJob(sourcePos, destPos);
                 } else {
-                    // In normal mode: store letter positions as targets
-                    // and bits start at random positions
-                    targetPositions.push(createVector(x, y));
-                    bits.push(new Bit(x, y, soilColor));
+                    // Normal mode: bits start at random positions, jobs go to text destinations
+                    let sourcePos = createVector(random(width), random(height));  // Random source
+                    let destPos = createVector(x, y);  // Text position
+                    
+                    // Create bit at random position
+                    bits.push(new Bit(sourcePos.x, sourcePos.y, soilColor));
+                    
+                    // Create job to move it to text position (assemble)
+                    JobManager.createJob(sourcePos, destPos);
                 }
             }
         }
     }
     
-    // Generate random targets for reverse mode
-    if (isReverseMode) {
-        generateRandomTargets(bits.length);
-    }
+    // Sort jobs for left-to-right writing bias (once, not per ant!)
+    JobManager.sortJobsForWritingBias();
 }
 
 function prepareImage() {
@@ -848,8 +760,15 @@ function prepareImage() {
                         let b = offscreen.pixels[index+2];
                         let a = offscreen.pixels[index+3];
                         if (a > 128) {
-                            // For images, create bits with their original target positions
-                            bits.push(new Bit(x, y, color(r, g, b), x, y));
+                            // Create bits at random source positions
+                            let sourcePos = createVector(random(offscreen.width), random(offscreen.height));
+                            let destPos = createVector(x, y);
+                            
+                            // Create bit at source position
+                            bits.push(new Bit(sourcePos.x, sourcePos.y, color(r, g, b)));
+                            
+                            // Create job linking source to destination
+                            JobManager.createJob(sourcePos, destPos);
                         }
                     }
                 }
