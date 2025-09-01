@@ -1,3 +1,7 @@
+// Mobile performance optimization
+const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || matchMedia('(pointer: coarse)').matches;
+const RENDER_SCALE = IS_MOBILE ? 0.75 : 1;  // Render at 75% resolution on mobile
+
 // Configuration variables
 let mode = "text";
 let message = "";
@@ -278,7 +282,7 @@ class Ant {
     constructor() {
         this.pos = createVector(random(width), random(height));
         this.velocity = p5.Vector.random2D().mult(2);
-        this.maxSpeed = 3;
+        this.maxSpeed = IS_MOBILE ? 4.5 : 3;  // 50% faster on mobile
         this.wanderStrength = 0.5;
         this.carrying = null;
         this.targetPos = null;
@@ -517,19 +521,11 @@ class Ant {
 
     // Calculate separation force from nearby ants
     calculateSeparation() {
-        // Skip separation calculations when carrying a bit (focused on delivery)
-        if (this.carrying !== null) {
-            return createVector(0, 0);
-        }
-        
         let separation = createVector(0, 0);
         let count = 0;
-        let checked = 0;
-        const maxChecks = 50; // Limit separation checks to maximum 50 other ants per frame
         
         for (let other of ants) {
             if (other === this) continue; // Skip self
-            if (checked >= maxChecks) break; // Early exit after checking 50 ants
             
             let d = p5.Vector.dist(this.pos, other.pos);
             if (d < this.separationRadius) {
@@ -540,17 +536,13 @@ class Ant {
                 separation.add(diff);
                 count++;
             }
-            checked++;
         }
         
-        // Early exit if no nearby ants found
-        if (count === 0) {
-            return createVector(0, 0);
+        if (count > 0) {
+            separation.div(count);
+            separation.setMag(this.maxSpeed);
+            separation.mult(this.separationStrength);
         }
-        
-        separation.div(count);
-        separation.setMag(this.maxSpeed);
-        separation.mult(this.separationStrength);
         
         return separation;
     }
@@ -583,12 +575,27 @@ let antSprite;
 
 function setup() {
     const sketchHolder = document.getElementById('sketch-holder');
-    const canvas = createCanvas(sketchHolder.clientWidth, sketchHolder.clientHeight);
-    canvas.parent('sketch-holder');
     
-    // Mobile detection and frame rate optimization
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
-    frameRate(isMobile ? 20 : 30);
+    // Use scaled resolution for mobile performance
+    const w = Math.floor(sketchHolder.clientWidth * RENDER_SCALE);
+    const h = Math.floor(sketchHolder.clientHeight * RENDER_SCALE);
+    const canvas = createCanvas(w, h);
+    canvas.parent('sketch-holder');
+
+    // Performance optimizations for mobile
+    if (IS_MOBILE) {
+        pixelDensity(1);   // Disable high-DPI rendering
+        noSmooth();        // Disable anti-aliasing
+        
+        // Scale canvas up to full size with CSS
+        const c = document.querySelector('canvas');
+        c.style.width = `${sketchHolder.clientWidth}px`;
+        c.style.height = `${sketchHolder.clientHeight}px`;
+        
+        frameRate(20);     // Lower frame rate
+    } else {
+        frameRate(30);     // Normal frame rate for desktop
+    }
     
     offscreen = createGraphics(width, height);
     
@@ -675,7 +682,16 @@ function setup() {
 // Add window resize handler
 function windowResized() {
     const sketchHolder = document.getElementById('sketch-holder');
-    resizeCanvas(sketchHolder.clientWidth, sketchHolder.clientHeight);
+    const w = Math.floor(sketchHolder.clientWidth * RENDER_SCALE);
+    const h = Math.floor(sketchHolder.clientHeight * RENDER_SCALE);
+    resizeCanvas(w, h, true);
+    
+    if (IS_MOBILE) {
+        const c = document.querySelector('canvas');
+        c.style.width = `${sketchHolder.clientWidth}px`;
+        c.style.height = `${sketchHolder.clientHeight}px`;
+    }
+    
     offscreen = createGraphics(width, height);
 }
 
